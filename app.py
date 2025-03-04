@@ -3,38 +3,42 @@ import torch
 import timm
 from torchvision import transforms
 from PIL import Image
-import numpy as np
 import os
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Load and set up the model
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = timm.create_model('vit_tiny_patch16_224', pretrained=False, num_classes=8)
-    model_path = os.path.join('student_model.pth')
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
+    try:
+        model = timm.create_model('vit_tiny_patch16_224', pretrained=False, num_classes=8)
+        model_path = 'student_model.pth'
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file {model_path} not found")
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        model.to(device)
+        model.eval()
+        logger.info("Model loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load model: {str(e)}")
+        raise
     return model, device
 
 student_model, device = load_model()
 
-# Define class names
 class_names = ['basophil', 'eosinophil', 'erythroblast', 'ig', 'lymphocyte', 'monocyte', 'neutrophil', 'platelet']
 
-# Define preprocessing transform
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# Route for the home page
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        # Check if an image file is uploaded
         if 'image' not in request.files:
             return jsonify({'error': 'No image file provided'}), 400
         
@@ -43,34 +47,28 @@ def index():
             return jsonify({'error': 'No selected file'}), 400
         
         try:
-            # Save and process the image
-            image_path = os.path.join('static', 'uploads', file.filename)
-            os.makedirs(os.path.dirname(image_path), exist_ok=True)
-            file.save(image_path)
-            
-            # Open and preprocess the image
-            image = Image.open(image_path).convert('RGB')
+            logger.info(f"Processing file: {file.filename}")
+            image = Image.open(file).convert('RGB')
             input_tensor = transform(image)
             input_batch = input_tensor.unsqueeze(0).to(device)
 
-            # Make prediction
             with torch.no_grad():
                 output = student_model(input_batch)
                 probabilities = torch.softmax(output, dim=1)
                 predicted_class = torch.argmax(probabilities, dim=1)
                 confidence = probabilities[0][predicted_class].item()
 
-            # Get the predicted class name
             predicted_label = class_names[predicted_class.item()]
+            logger.info(f"Prediction: {predicted_label}, Confidence: {confidence:.2%}")
             
-            # Return JSON response for AJAX
             return jsonify({
                 'prediction': predicted_label,
                 'confidence': f"{confidence:.2%}",
-                'image_path': f"/static/uploads/{file.filename}"
+                'image_path': None
             })
 
         except Exception as e:
+            logger.error(f"Error: {str(e)}")
             return jsonify({'error': str(e)}), 500
     
     return render_template('index.html')
