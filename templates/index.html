@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Peripheral Blood Cell Classifier</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .upload-form {
+            margin: 20px 0;
+        }
+        #uploaded-image {
+            max-width: 100%;
+            margin: 10px 0;
+        }
+        #result {
+            margin-top: 20px;
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Peripheral Blood Cell Classifier</h1>
+    <p>Upload an image of a blood cell to classify it into one of 8 types.</p>
+    
+    <form class="upload-form" id="uploadForm" enctype="multipart/form-data">
+        <input type="file" id="image" name="image" accept="image/*">
+        <button type="submit">Upload and Classify</button>
+    </form>
+
+    <div id="image-container">
+        <img id="uploaded-image" style="display: none;">
+    </div>
+
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            formData.append('image', document.getElementById('image').files[0]);
+
+            fetch('/', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('result').innerHTML = `<p style="color: red;">Error: ${data.error}</p>`;
+                } else {
+                    document.getElementById('uploaded-image').src = data.image_path;
+                    document.getElementById('uploaded-image').style.display = 'block';
+                    document.getElementById('result').innerHTML = `
+                        <p><strong>Predicted Class:</strong> ${data.prediction}</p>
+                        <p><strong>Confidence:</strong> ${data.confidence}</p>
+                    `;
+                }
+            })
+            .catch(error => {
+                document.getElementById('result').innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            });
+        });
+    </script>
+</body>
+</html>
