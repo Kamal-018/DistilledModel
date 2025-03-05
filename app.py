@@ -1,77 +1,94 @@
-from flask import Flask, render_template, request, jsonify
+import os
 import torch
 import timm
-from torchvision import transforms
+import numpy as np
 from PIL import Image
-import os
-import logging
+import torchvision.transforms as transforms
+from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-def load_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    try:
-        model = timm.create_model('vit_tiny_patch16_224', pretrained=False, num_classes=8)
-        model_path = 'student_model.pth'
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file {model_path} not found")
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        model.to(device)
-        model.eval()
-        logger.info("Model loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load model: {str(e)}")
-        raise
-    return model, device
+# Model Configuration
+CLASSES = ['basophil', 'eosinophil', 'erythroblast', 'ig', 'lymphocyte', 'monocyte', 'neutrophil', 'platelet']
+MODEL_PATH = 'student_model.pth'
+IMAGE_SIZE = 224
 
-student_model, device = load_model()
-
-class_names = ['basophil', 'eosinophil', 'erythroblast', 'ig', 'lymphocyte', 'monocyte', 'neutrophil', 'platelet']
-
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file provided'}), 400
+class BloodCellClassifier:
+    def __init__(self, model_path, classes):
+        # Load the Vision Transformer model
+        self.model = timm.create_model('vit_tiny_patch16_224', pretrained=False, num_classes=len(classes))
         
-        file = request.files['image']
-        if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
+        # Load pre-trained weights
+        state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+        self.model.load_state_dict(state_dict)
         
-        try:
-            logger.info(f"Processing file: {file.filename}")
-            image = Image.open(file).convert('RGB')
-            input_tensor = transform(image)
-            input_batch = input_tensor.unsqueeze(0).to(device)
-
-            with torch.no_grad():
-                output = student_model(input_batch)
-                probabilities = torch.softmax(output, dim=1)
-                predicted_class = torch.argmax(probabilities, dim=1)
-                confidence = probabilities[0][predicted_class].item()
-
-            predicted_label = class_names[predicted_class.item()]
-            logger.info(f"Prediction: {predicted_label}, Confidence: {confidence:.2%}")
-            
-            return jsonify({
-                'prediction': predicted_label,
-                'confidence': f"{confidence:.2%}",
-                'image_path': None
-            })
-
-        except Exception as e:
-            logger.error(f"Error: {str(e)}")
-            return jsonify({'error': str(e)}), 500
+        # Set model to evaluation mode
+        self.model.eval()
+        
+        self.classes = classes
+        
+        # Image transformation pipeline
+        self.transform = transforms.Compose([
+            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
     
+    def predict_class(self, image):
+        """
+        Predict the class of the input image
+        
+        Args:
+            image (PIL.Image): Input image
+        
+        Returns:
+            tuple: Predicted class name and confidence score
+        """
+        # Preprocess the image
+        input_tensor = self.transform(image).unsqueeze(0)
+        
+        # Disable gradient computation for inference
+        with torch.no_grad():
+            outputs = self.model(input_tensor)
+            probabilities = torch.softmax(outputs, dim=1)
+            confidence, predicted_class = torch.max(probabilities, 1)
+            
+            class_name = self.classes[predicted_class.item()]
+            confidence_score = confidence.item() * 100
+            
+            return class_name, confidence_score
+
+# Initialize the classifier
+classifier = BloodCellClassifier(MODEL_PATH, CLASSES)
+
+@app.route('/', methods=['GET'])
+def index():
     return render_template('index.html')
 
+@app.route('/predict', methods=['POST'])
+def predict():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    try:
+        # Open the image
+        image = Image.open(file.stream).convert('RGB')
+        
+        # Predict the class
+        predicted_class, confidence = classifier.predict_class(image)
+        
+        return jsonify({
+            'class': predicted_class,
+            'confidence': f'{confidence:.2f}%'
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True)
