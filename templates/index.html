@@ -49,15 +49,30 @@
             
             const formData = new FormData(this);
             const resultDiv = document.getElementById('result');
+            const submitButton = this.querySelector('button[type="submit"]');
             
-            resultDiv.innerHTML = '<div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>';
+            // Disable submit button and show loading
+            submitButton.disabled = true;
+            resultDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>';
             
             fetch('/predict', {
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
+            .then(response => {
+                // Check if response is ok (status in 200-299 range)
+                if (!response.ok) {
+                    // Try to parse error response
+                    return response.json().then(errorData => {
+                        throw new Error(errorData.error || 'Unknown error occurred');
+                    });
+                }
+                return response.json();
+            })
             .then(data => {
+                // Re-enable submit button
+                submitButton.disabled = false;
+                
                 if (data.error) {
                     resultDiv.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
                 } else {
@@ -70,7 +85,9 @@
                 }
             })
             .catch(error => {
-                resultDiv.innerHTML = `<div class="alert alert-danger">Error: ${error}</div>`;
+                // Re-enable submit button
+                submitButton.disabled = false;
+                resultDiv.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
             });
         });
     </script>
